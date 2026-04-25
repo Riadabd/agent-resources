@@ -12,6 +12,7 @@ pub const Key = enum {
     left,
     right,
     enter,
+    escape,
     backspace,
     space,
     q,
@@ -125,11 +126,14 @@ fn readKeyFromFd(fd: std.posix.fd_t) !Key {
 }
 
 fn readEscapeSequence(fd: std.posix.fd_t) !Key {
-    const introducer = (try readByte(fd)) orelse return .other;
-    if (introducer != '[' and introducer != 'O') return .other;
+    if (!try hasPendingInput(fd, 25)) return .escape;
+
+    const introducer = (try readByte(fd)) orelse return .escape;
+    if (introducer != '[' and introducer != 'O') return .escape;
 
     while (true) {
-        const byte = (try readByte(fd)) orelse return .other;
+        if (!try hasPendingInput(fd, 25)) return .escape;
+        const byte = (try readByte(fd)) orelse return .escape;
         return switch (byte) {
             'A' => .up,
             'B' => .down,
@@ -139,6 +143,15 @@ fn readEscapeSequence(fd: std.posix.fd_t) !Key {
             else => .other,
         };
     }
+}
+
+fn hasPendingInput(fd: std.posix.fd_t, timeout_ms: i32) !bool {
+    var fds = [_]std.posix.pollfd{.{
+        .fd = fd,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    }};
+    return try std.posix.poll(&fds, timeout_ms) != 0;
 }
 
 fn readByte(fd: std.posix.fd_t) !?u8 {
@@ -170,6 +183,10 @@ test "read key parses single byte controls" {
     try std.testing.expectEqual(Key.space, try readKeyFromBytes(" "));
     try std.testing.expectEqual(Key.enter, try readKeyFromBytes("\r"));
     try std.testing.expectEqual(Key.q, try readKeyFromBytes("q"));
+}
+
+test "read key parses bare escape as a key" {
+    try std.testing.expectEqual(Key.escape, try readKeyFromBytes("\x1b"));
 }
 
 test "read key parses arrow escape sequences byte by byte" {

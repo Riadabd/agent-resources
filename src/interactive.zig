@@ -103,34 +103,14 @@ pub fn run(
                 cursor,
                 &section_cursor,
             ),
-            .backspace => {
-                switch (stage) {
-                    .section_select => return null,
-                    .snippet_select => {
-                        if (section_cursor == 0) {
-                            stage = .section_select;
-                            cursor = 0;
-                        } else {
-                            section_cursor -= 1;
-                            cursor = 0;
-                        }
-                    },
-                    .review => {
-                        stage = .snippet_select;
-                        cursor = 0;
-                    },
-                }
+            .escape, .backspace => {
+                if (!handleBack(&stage, &cursor, section_cursor)) return null;
             },
             .enter => switch (stage) {
                 .section_select => {
-                    const selected_count = ensureCurrentSectionSelected(section_entries.items, cursor);
-                    if (selected_count == 0) continue;
+                    if (!beginSnippetStageFromSections(section_entries.items, cursor, &section_cursor)) continue;
                     stage = .snippet_select;
-                    section_cursor = 0;
                     cursor = 0;
-                    while (section_cursor < section_entries.items.len and !section_entries.items[section_cursor].selected) {
-                        section_cursor += 1;
-                    }
                 },
                 .snippet_select => {
                     try ensureCurrentSnippetSelected(
@@ -315,7 +295,7 @@ fn buildReviewLines(
 
     try lines.append(allocator, try allocator.dupe(u8, "Selected sections:"));
     for (section_entries) |entry| {
-        if (!entry.selected) continue;
+        if (!entry.selected and !nodeHasSelectedFile(entry.section.root, selected_files)) continue;
         try lines.append(allocator, try std.fmt.allocPrint(allocator, "  - {s}", .{entry.section.title}));
     }
 
@@ -392,6 +372,22 @@ fn handleLeft(
     }
 }
 
+fn handleBack(stage: *Stage, cursor: *usize, section_cursor: usize) bool {
+    switch (stage.*) {
+        .section_select => return false,
+        .snippet_select => {
+            stage.* = .section_select;
+            cursor.* = section_cursor;
+            return true;
+        },
+        .review => {
+            stage.* = .snippet_select;
+            cursor.* = 0;
+            return true;
+        },
+    }
+}
+
 fn itemCount(
     allocator: std.mem.Allocator,
     section_entries: []SectionEntry,
@@ -419,21 +415,14 @@ fn nextSelectedSection(section_entries: []const SectionEntry, start: usize) ?usi
     return null;
 }
 
-fn countSelectedSections(section_entries: []const SectionEntry) usize {
-    var count: usize = 0;
-    for (section_entries) |entry| {
-        if (entry.selected) count += 1;
-    }
-    return count;
-}
-
-fn ensureCurrentSectionSelected(section_entries: []SectionEntry, cursor: usize) usize {
-    const selected_count = countSelectedSections(section_entries);
-    if (selected_count != 0) return selected_count;
-    if (section_entries.len == 0) return 0;
-
-    section_entries[cursor].selected = true;
-    return 1;
+fn beginSnippetStageFromSections(
+    section_entries: []const SectionEntry,
+    cursor: usize,
+    section_cursor: *usize,
+) bool {
+    if (section_entries.len == 0) return false;
+    section_cursor.* = nextSelectedSection(section_entries, 0) orelse cursor;
+    return true;
 }
 
 fn ensureCurrentSnippetSelected(
@@ -444,7 +433,8 @@ fn ensureCurrentSnippetSelected(
     cursor: usize,
     section_cursor: *usize,
 ) !void {
-    if (selected_files.count() != 0) return;
+    const current = section_entries[section_cursor.*];
+    if (nodeHasSelectedFile(current.section.root, selected_files)) return;
     try handleSpace(
         allocator,
         section_entries,
@@ -497,6 +487,21 @@ fn selectionState(
             if (selected_count == 0) break :blk .none;
             if (selected_count == total) break :blk .all;
             break :blk .partial;
+        },
+    };
+}
+
+fn nodeHasSelectedFile(
+    node: *const catalog_mod.Node,
+    selected_files: *const std.StringHashMapUnmanaged(void),
+) bool {
+    return switch (node.kind) {
+        .file => selected_files.contains(node.relative_path),
+        .directory => blk: {
+            for (node.children.items) |child| {
+                if (nodeHasSelectedFile(child, selected_files)) break :blk true;
+            }
+            break :blk false;
         },
     };
 }
@@ -721,23 +726,49 @@ test "directory expansion uses caller-owned expansion map allocation" {
     try std.testing.expect(expanded.contains(directory.relative_path));
 }
 
-test "enter selects highlighted section when none are selected" {
-    var root = catalog_mod.Node{
+test "entering highlighted section without explicit selection is transient" {
+    var language_root = catalog_mod.Node{
         .kind = .directory,
         .name = "languages",
         .relative_path = "languages",
         .title = "Languages",
         .parent = null,
     };
-    var section = catalog_mod.Section{
+    var language_section = catalog_mod.Section{
         .name = "languages",
         .title = "Languages",
-        .root = &root,
+        .root = &language_root,
     };
-    var entries = [_]SectionEntry{.{ .section = &section }};
+    var tooling_root = catalog_mod.Node{
+        .kind = .directory,
+        .name = "tooling",
+        .relative_path = "tooling",
+        .title = "Tooling",
+        .parent = null,
+    };
+    var tooling_section = catalog_mod.Section{
+        .name = "tooling",
+        .title = "Tooling",
+        .root = &tooling_root,
+    };
+    var entries = [_]SectionEntry{
+        .{ .section = &language_section },
+        .{ .section = &tooling_section },
+    };
 
-    try std.testing.expectEqual(@as(usize, 1), ensureCurrentSectionSelected(&entries, 0));
-    try std.testing.expect(entries[0].selected);
+    var section_cursor: usize = 0;
+    try std.testing.expect(beginSnippetStageFromSections(&entries, 1, &section_cursor));
+    try std.testing.expectEqual(@as(usize, 1), section_cursor);
+    try std.testing.expect(!entries[1].selected);
+}
+
+test "back from snippet selection returns to the current section" {
+    var stage: Stage = .snippet_select;
+    var cursor: usize = 0;
+
+    try std.testing.expect(handleBack(&stage, &cursor, 1));
+    try std.testing.expectEqual(Stage.section_select, stage);
+    try std.testing.expectEqual(@as(usize, 1), cursor);
 }
 
 test "enter selects highlighted snippet when none are selected" {
@@ -775,4 +806,69 @@ test "enter selects highlighted snippet when none are selected" {
 
     try ensureCurrentSnippetSelected(allocator, &entries, &selected, &expanded, 0, &section_cursor);
     try std.testing.expect(selected.contains(file.relative_path));
+}
+
+test "enter selects highlighted snippet for the current section" {
+    const allocator = std.testing.allocator;
+    var first_root = catalog_mod.Node{
+        .kind = .directory,
+        .name = "tooling",
+        .relative_path = "tooling",
+        .title = "Tooling",
+        .parent = null,
+    };
+    var first_file = catalog_mod.Node{
+        .kind = .file,
+        .name = "task-runner.md",
+        .relative_path = "tooling/task-runner.md",
+        .title = "Task Runner",
+        .parent = &first_root,
+        .source = .{ .content = "", .promoted_title = null },
+    };
+    try first_root.children.append(allocator, &first_file);
+    defer first_root.children.deinit(allocator);
+
+    var second_root = catalog_mod.Node{
+        .kind = .directory,
+        .name = "languages",
+        .relative_path = "languages",
+        .title = "Languages",
+        .parent = null,
+    };
+    var second_file = catalog_mod.Node{
+        .kind = .file,
+        .name = "python.md",
+        .relative_path = "languages/python.md",
+        .title = "Python",
+        .parent = &second_root,
+        .source = .{ .content = "", .promoted_title = null },
+    };
+    try second_root.children.append(allocator, &second_file);
+    defer second_root.children.deinit(allocator);
+
+    var first_section = catalog_mod.Section{
+        .name = "tooling",
+        .title = "Tooling",
+        .root = &first_root,
+    };
+    var second_section = catalog_mod.Section{
+        .name = "languages",
+        .title = "Languages",
+        .root = &second_root,
+    };
+    var entries = [_]SectionEntry{
+        .{ .section = &first_section, .selected = true },
+        .{ .section = &second_section, .selected = true },
+    };
+
+    var selected: std.StringHashMapUnmanaged(void) = .empty;
+    defer selected.deinit(allocator);
+    try selected.put(allocator, first_file.relative_path, {});
+    var expanded: std.StringHashMapUnmanaged(void) = .empty;
+    defer expanded.deinit(allocator);
+    var section_cursor: usize = 1;
+
+    try ensureCurrentSnippetSelected(allocator, &entries, &selected, &expanded, 0, &section_cursor);
+    try std.testing.expect(selected.contains(first_file.relative_path));
+    try std.testing.expect(selected.contains(second_file.relative_path));
 }
