@@ -3,13 +3,14 @@
 const std = @import("std");
 const catalog_mod = @import("catalog.zig");
 
+const section_count = catalog_mod.known_sections.len;
+
 pub const Error = error{
     DuplicatePath,
     EmptySelection,
     InvalidArgument,
     InvalidSectionPath,
     MutuallyExclusiveFlags,
-    UnknownSection,
 };
 
 pub const ListOptions = struct {
@@ -19,24 +20,15 @@ pub const ListOptions = struct {
 pub const GenerateOptions = struct {
     output_dir: []const u8,
     snippets_root: ?[]const u8 = null,
-    quick_summary: std.ArrayListUnmanaged([]const u8) = .empty,
-    mindset: std.ArrayListUnmanaged([]const u8) = .empty,
-    tooling: std.ArrayListUnmanaged([]const u8) = .empty,
-    testing: std.ArrayListUnmanaged([]const u8) = .empty,
-    language: std.ArrayListUnmanaged([]const u8) = .empty,
-    communication: std.ArrayListUnmanaged([]const u8) = .empty,
-    environment: std.ArrayListUnmanaged([]const u8) = .empty,
+    selections: [section_count]std.ArrayListUnmanaged([]const u8) =
+        [_]std.ArrayListUnmanaged([]const u8){.empty} ** section_count,
 
     pub fn deinit(self: *GenerateOptions, allocator: std.mem.Allocator) void {
         allocator.free(self.output_dir);
         if (self.snippets_root) |root| allocator.free(root);
-        deinitPathList(allocator, &self.quick_summary);
-        deinitPathList(allocator, &self.mindset);
-        deinitPathList(allocator, &self.tooling);
-        deinitPathList(allocator, &self.testing);
-        deinitPathList(allocator, &self.language);
-        deinitPathList(allocator, &self.communication);
-        deinitPathList(allocator, &self.environment);
+        for (&self.selections) |*selection| {
+            deinitPathList(allocator, selection);
+        }
     }
 };
 
@@ -82,27 +74,34 @@ pub fn resolveExplicitSelectionPaths(
     var seen: std.StringHashMapUnmanaged(void) = .empty;
     defer seen.deinit(allocator);
 
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "quick-summary", options.quick_summary.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "mindset", options.mindset.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "tooling", options.tooling.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "testing", options.testing.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "language", options.language.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "communication", options.communication.items);
-    try appendResolvedSectionPaths(allocator, &result, &seen, catalog, "environment", options.environment.items);
+    for (catalog_mod.known_sections, 0..) |section, index| {
+        try appendResolvedSectionPaths(
+            allocator,
+            &result,
+            &seen,
+            catalog,
+            section.key,
+            options.selections[index].items,
+        );
+    }
 
     if (result.items.len == 0) return Error.EmptySelection;
     return try result.toOwnedSlice(allocator);
 }
 
-fn parseList(allocator: std.mem.Allocator, args: [][]const u8) !ListOptions {
+fn parseList(allocator: std.mem.Allocator, args: []const []const u8) !ListOptions {
     var options = ListOptions{};
+    errdefer if (options.section) |section| allocator.free(section);
+
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
         if (std.mem.eql(u8, arg, "--section")) {
             index += 1;
             if (index >= args.len) return Error.InvalidArgument;
-            options.section = try allocator.dupe(u8, args[index]);
+            const section = try allocator.dupe(u8, args[index]);
+            if (options.section) |existing| allocator.free(existing);
+            options.section = section;
             continue;
         }
         return Error.InvalidArgument;
@@ -110,7 +109,7 @@ fn parseList(allocator: std.mem.Allocator, args: [][]const u8) !ListOptions {
     return options;
 }
 
-fn parseGenerate(allocator: std.mem.Allocator, args: [][]const u8) !GenerateOptions {
+fn parseGenerate(allocator: std.mem.Allocator, args: []const []const u8) !GenerateOptions {
     var options = GenerateOptions{
         .output_dir = try allocator.dupe(u8, "."),
     };
@@ -122,23 +121,28 @@ fn parseGenerate(allocator: std.mem.Allocator, args: [][]const u8) !GenerateOpti
         if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
             if (index >= args.len) return Error.InvalidArgument;
+            const output_dir = try allocator.dupe(u8, args[index]);
             allocator.free(options.output_dir);
-            options.output_dir = try allocator.dupe(u8, args[index]);
+            options.output_dir = output_dir;
             continue;
         }
         if (std.mem.eql(u8, arg, "--snippets")) {
             index += 1;
             if (index >= args.len) return Error.InvalidArgument;
-            options.snippets_root = try allocator.dupe(u8, args[index]);
+            const snippets_root = try allocator.dupe(u8, args[index]);
+            if (options.snippets_root) |existing| allocator.free(existing);
+            options.snippets_root = snippets_root;
             continue;
         }
 
         const target = sectionListForFlag(&options, arg) orelse return Error.InvalidArgument;
+        const original_len = target.items.len;
         index += 1;
         if (index >= args.len) return Error.InvalidArgument;
         while (index < args.len and !std.mem.startsWith(u8, args[index], "--")) : (index += 1) {
             try target.append(allocator, try allocator.dupe(u8, args[index]));
         }
+        if (target.items.len == original_len) return Error.InvalidArgument;
         index -= 1;
     }
 
@@ -148,24 +152,19 @@ fn parseGenerate(allocator: std.mem.Allocator, args: [][]const u8) !GenerateOpti
 }
 
 fn hasAnyExplicitFlags(options: GenerateOptions) bool {
-    return options.quick_summary.items.len > 0 or
-        options.mindset.items.len > 0 or
-        options.tooling.items.len > 0 or
-        options.testing.items.len > 0 or
-        options.language.items.len > 0 or
-        options.communication.items.len > 0 or
-        options.environment.items.len > 0;
+    for (options.selections) |selection| {
+        if (selection.items.len > 0) return true;
+    }
+    return false;
 }
 
 fn sectionListForFlag(options: *GenerateOptions, flag: []const u8) ?*std.ArrayListUnmanaged([]const u8) {
-    if (std.mem.eql(u8, flag, "--quick-summary")) return &options.quick_summary;
-    if (std.mem.eql(u8, flag, "--mindset")) return &options.mindset;
-    if (std.mem.eql(u8, flag, "--tooling")) return &options.tooling;
-    if (std.mem.eql(u8, flag, "--testing")) return &options.testing;
-    if (std.mem.eql(u8, flag, "--language")) return &options.language;
-    if (std.mem.eql(u8, flag, "--communication")) return &options.communication;
-    if (std.mem.eql(u8, flag, "--environment")) return &options.environment;
-    return null;
+    const prefix = "--";
+    if (!std.mem.startsWith(u8, flag, prefix)) return null;
+    const key = flag[prefix.len..];
+    const index = catalog_mod.knownSectionIndex(key) orelse return null;
+    if (!std.mem.eql(u8, catalog_mod.known_sections[index].key, key)) return null;
+    return &options.selections[index];
 }
 
 fn appendResolvedSectionPaths(
@@ -174,16 +173,14 @@ fn appendResolvedSectionPaths(
     seen: *std.StringHashMapUnmanaged(void),
     catalog: *const catalog_mod.Catalog,
     expected_section: []const u8,
-    paths: [][]const u8,
+    paths: []const []const u8,
 ) !void {
     for (paths) |path| {
         const relative_path = try normalizeSelectionPath(allocator, catalog.root_path, path);
         defer allocator.free(relative_path);
 
         var parts = std.mem.splitScalar(u8, relative_path, std.fs.path.sep);
-        const top_level = parts.next() orelse {
-            return Error.InvalidSectionPath;
-        };
+        const top_level = parts.next() orelse return Error.InvalidSectionPath;
         if (!catalog_mod.sectionMatchesFilter(top_level, expected_section)) {
             return Error.InvalidSectionPath;
         }
@@ -208,10 +205,10 @@ fn normalizeSelectionPath(
     defer allocator.free(absolute_path);
 
     if (!std.mem.startsWith(u8, absolute_path, root_path)) return Error.InvalidSectionPath;
-    if (absolute_path.len == root_path.len) return Error.InvalidSectionPath;
+    if (absolute_path.len <= root_path.len) return Error.InvalidSectionPath;
+    if (absolute_path[root_path.len] != std.fs.path.sep) return Error.InvalidSectionPath;
 
-    const offset = if (absolute_path[root_path.len] == std.fs.path.sep) root_path.len + 1 else root_path.len;
-    return try allocator.dupe(u8, absolute_path[offset..]);
+    return try allocator.dupe(u8, absolute_path[root_path.len + 1 ..]);
 }
 
 fn collectArgs(allocator: std.mem.Allocator) ![][]const u8 {
@@ -238,6 +235,11 @@ fn deinitPathList(allocator: std.mem.Allocator, list: *std.ArrayListUnmanaged([]
     list.deinit(allocator);
 }
 
+fn sectionSelection(options: *GenerateOptions, section_key: []const u8) *std.ArrayListUnmanaged([]const u8) {
+    const index = catalog_mod.knownSectionIndex(section_key) orelse unreachable;
+    return &options.selections[index];
+}
+
 test "generate rejects snippets root mixed with explicit selection" {
     const allocator = std.testing.allocator;
     var options = GenerateOptions{
@@ -245,6 +247,46 @@ test "generate rejects snippets root mixed with explicit selection" {
         .snippets_root = try allocator.dupe(u8, "snippets"),
     };
     defer options.deinit(allocator);
-    try options.tooling.append(allocator, try allocator.dupe(u8, "tooling/make.md"));
+    try sectionSelection(&options, "tooling").append(allocator, try allocator.dupe(u8, "tooling/make.md"));
     try std.testing.expect(hasAnyExplicitFlags(options));
+}
+
+test "generate rejects section flags without paths" {
+    try std.testing.expectError(
+        Error.InvalidArgument,
+        parseGenerate(std.testing.allocator, &.{ "--tooling", "--language", "languages/python.md" }),
+    );
+}
+
+test "generate stores explicit selections by known section" {
+    var options = try parseGenerate(
+        std.testing.allocator,
+        &.{ "--language", "languages/python.md", "--tooling", "tooling/task-runner.md" },
+    );
+    defer options.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 1), sectionSelection(&options, "language").items.len);
+    try std.testing.expectEqualStrings("languages/python.md", sectionSelection(&options, "language").items[0]);
+    try std.testing.expectEqual(@as(usize, 1), sectionSelection(&options, "tooling").items.len);
+    try std.testing.expectEqualStrings("tooling/task-runner.md", sectionSelection(&options, "tooling").items[0]);
+}
+
+test "selection path normalization rejects sibling path prefixes" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.makePath("snippets/tooling");
+    try temp.dir.writeFile(.{ .sub_path = "snippets/tooling/task-runner.md", .data = "make\n" });
+    try temp.dir.makePath("snippets-other/tooling");
+    try temp.dir.writeFile(.{ .sub_path = "snippets-other/tooling/task-runner.md", .data = "make\n" });
+
+    const root_path = try temp.dir.realpathAlloc(std.testing.allocator, "snippets");
+    defer std.testing.allocator.free(root_path);
+    const sibling_path = try temp.dir.realpathAlloc(std.testing.allocator, "snippets-other/tooling/task-runner.md");
+    defer std.testing.allocator.free(sibling_path);
+
+    try std.testing.expectError(
+        Error.InvalidSectionPath,
+        normalizeSelectionPath(std.testing.allocator, root_path, sibling_path),
+    );
 }

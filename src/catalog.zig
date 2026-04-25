@@ -7,6 +7,23 @@ const max_file_bytes = 1024 * 1024;
 pub const Error = error{
     InvalidCatalogRoot,
     NoSnippetsFound,
+    UnknownSection,
+};
+
+pub const SectionSpec = struct {
+    key: []const u8,
+    title: []const u8,
+    aliases: []const []const u8 = &[_][]const u8{},
+};
+
+pub const known_sections = [_]SectionSpec{
+    .{ .key = "quick-summary", .title = "Quick Summary" },
+    .{ .key = "mindset", .title = "Mindset" },
+    .{ .key = "tooling", .title = "Tooling" },
+    .{ .key = "testing", .title = "Testing" },
+    .{ .key = "language", .title = "Languages", .aliases = &[_][]const u8{"languages"} },
+    .{ .key = "communication", .title = "Communication Preferences", .aliases = &[_][]const u8{"communication-preferences"} },
+    .{ .key = "environment", .title = "Environment And Setup", .aliases = &[_][]const u8{"environment-and-setup"} },
 };
 
 pub const NodeKind = enum {
@@ -197,25 +214,23 @@ pub fn writeCatalogListing(
     catalog: *const Catalog,
     maybe_section: ?[]const u8,
 ) !void {
+    var wrote_any = false;
     for (catalog.sections.items) |section| {
         if (maybe_section) |filter| {
             if (!sectionMatchesFilter(section.name, filter)) continue;
         }
 
+        wrote_any = true;
         try writer.print("{s}\n", .{section.title});
         try writeSectionListing(writer, section.root, 1);
         try writer.writeAll("\n");
     }
+
+    if (maybe_section != null and !wrote_any) return Error.UnknownSection;
 }
 
 pub fn sectionTitleAlloc(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
-    if (sectionMatchesFilter(name, "quick-summary")) return allocator.dupe(u8, "Quick Summary");
-    if (sectionMatchesFilter(name, "mindset")) return allocator.dupe(u8, "Mindset");
-    if (sectionMatchesFilter(name, "tooling")) return allocator.dupe(u8, "Tooling");
-    if (sectionMatchesFilter(name, "testing")) return allocator.dupe(u8, "Testing");
-    if (sectionMatchesFilter(name, "language")) return allocator.dupe(u8, "Languages");
-    if (sectionMatchesFilter(name, "communication")) return allocator.dupe(u8, "Communication Preferences");
-    if (sectionMatchesFilter(name, "environment")) return allocator.dupe(u8, "Environment And Setup");
+    if (knownSectionSpec(name)) |section| return allocator.dupe(u8, section.title);
     return formatSegmentTitleAlloc(allocator, name);
 }
 
@@ -226,14 +241,28 @@ pub fn sectionMatchesFilter(section_name: []const u8, filter: []const u8) bool {
 }
 
 pub fn canonicalSectionKey(value: []const u8) []const u8 {
-    if (std.mem.eql(u8, value, "quick-summary")) return "quick-summary";
-    if (std.mem.eql(u8, value, "mindset")) return "mindset";
-    if (std.mem.eql(u8, value, "tooling")) return "tooling";
-    if (std.mem.eql(u8, value, "testing")) return "testing";
-    if (std.mem.eql(u8, value, "language") or std.mem.eql(u8, value, "languages")) return "language";
-    if (std.mem.eql(u8, value, "communication") or std.mem.eql(u8, value, "communication-preferences")) return "communication";
-    if (std.mem.eql(u8, value, "environment") or std.mem.eql(u8, value, "environment-and-setup")) return "environment";
+    if (knownSectionSpec(value)) |section| return section.key;
     return value;
+}
+
+pub fn knownSectionSpec(value: []const u8) ?*const SectionSpec {
+    for (&known_sections) |*section| {
+        if (std.mem.eql(u8, value, section.key)) return section;
+        for (section.aliases) |alias| {
+            if (std.mem.eql(u8, value, alias)) return section;
+        }
+    }
+    return null;
+}
+
+pub fn knownSectionIndex(value: []const u8) ?usize {
+    for (known_sections, 0..) |section, index| {
+        if (std.mem.eql(u8, value, section.key)) return index;
+        for (section.aliases) |alias| {
+            if (std.mem.eql(u8, value, alias)) return index;
+        }
+    }
+    return null;
 }
 
 pub fn formatSegmentTitleAlloc(allocator: std.mem.Allocator, segment: []const u8) ![]const u8 {
@@ -253,25 +282,15 @@ pub fn formatSegmentTitleAlloc(allocator: std.mem.Allocator, segment: []const u8
                     output_char = char - ('a' - 'A');
                 }
                 try writer.writer.writeByte(output_char);
-                capitalize_next = char == ' ';
+                capitalize_next = false;
             },
-        }
-        if (char != '-' and char != '_') {
-            capitalize_next = false;
         }
     }
     return try writer.toOwnedSlice();
 }
 
 fn sectionRank(name: []const u8) usize {
-    const key = canonicalSectionKey(name);
-    if (std.mem.eql(u8, key, "quick-summary")) return 0;
-    if (std.mem.eql(u8, key, "mindset")) return 1;
-    if (std.mem.eql(u8, key, "tooling")) return 2;
-    if (std.mem.eql(u8, key, "testing")) return 3;
-    if (std.mem.eql(u8, key, "language")) return 4;
-    if (std.mem.eql(u8, key, "communication")) return 5;
-    if (std.mem.eql(u8, key, "environment")) return 6;
+    if (knownSectionIndex(name)) |index| return index;
     return std.math.maxInt(usize);
 }
 
@@ -368,6 +387,28 @@ test "section aliases map to the same canonical key" {
     try std.testing.expect(sectionMatchesFilter("languages", "language"));
     try std.testing.expect(sectionMatchesFilter("communication-preferences", "communication"));
     try std.testing.expect(sectionMatchesFilter("environment-and-setup", "environment"));
+}
+
+test "unknown section listing is rejected" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.makePath("tooling");
+    try temp.dir.writeFile(.{ .sub_path = "tooling/make.md", .data = "make\n" });
+
+    const root_path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+
+    var catalog = try Catalog.discover(std.testing.allocator, root_path);
+    defer catalog.deinit();
+
+    var writer: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer writer.deinit();
+
+    try std.testing.expectError(
+        Error.UnknownSection,
+        writeCatalogListing(&writer.writer, &catalog, "missing"),
+    );
 }
 
 test "title is read from the first markdown heading" {
