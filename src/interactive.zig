@@ -87,7 +87,7 @@ pub fn run(
                 if (cursor > 0) cursor -= 1;
             },
             .down => {
-                const length = try itemCount(allocator, section_entries.items, &expanded_dirs, stage, section_cursor);
+                const length = itemCount(section_entries.items, &expanded_dirs, stage, section_cursor);
                 if (cursor + 1 < length) cursor += 1;
             },
             .space => try handleSpace(
@@ -108,7 +108,6 @@ pub fn run(
                 section_cursor,
             ),
             .left => try handleLeft(
-                allocator,
                 section_entries.items,
                 &expanded_dirs,
                 stage,
@@ -157,7 +156,7 @@ pub fn run(
             else => {},
         }
 
-        const max_cursor = try itemCount(allocator, section_entries.items, &expanded_dirs, stage, section_cursor);
+        const max_cursor = itemCount(section_entries.items, &expanded_dirs, stage, section_cursor);
         if (max_cursor == 0) {
             cursor = 0;
         } else if (cursor >= max_cursor) {
@@ -336,9 +335,7 @@ fn handleSpace(
         },
         .snippet_select => {
             const current = section_entries[section_cursor.*];
-            const items = try flattenVisibleNodes(allocator, current.section.root, expanded_dirs);
-            defer allocator.free(items);
-            const item = items[cursor];
+            const item = visibleNodeAt(current.section.root, expanded_dirs, cursor) orelse return;
             switch (item.node.kind) {
                 .file => try toggleFile(allocator, item.node, selected_files),
                 .directory => try toggleDirectory(allocator, item.node, selected_files),
@@ -358,16 +355,13 @@ fn handleRight(
 ) !void {
     if (stage != .snippet_select) return;
     const current = section_entries[section_cursor];
-    const items = try flattenVisibleNodes(allocator, current.section.root, expanded_dirs);
-    defer allocator.free(items);
-    const item = items[cursor];
+    const item = visibleNodeAt(current.section.root, expanded_dirs, cursor) orelse return;
     if (item.node.kind == .directory) {
         try expandedDirsPut(allocator, expanded_dirs, item.node.relative_path);
     }
 }
 
 fn handleLeft(
-    allocator: std.mem.Allocator,
     section_entries: []SectionEntry,
     expanded_dirs: *std.StringHashMapUnmanaged(void),
     stage: Stage,
@@ -376,9 +370,7 @@ fn handleLeft(
 ) !void {
     if (stage != .snippet_select) return;
     const current = section_entries[section_cursor.*];
-    const items = try flattenVisibleNodes(allocator, current.section.root, expanded_dirs);
-    defer allocator.free(items);
-    const item = items[cursor];
+    const item = visibleNodeAt(current.section.root, expanded_dirs, cursor) orelse return;
     if (item.node.kind == .directory and expanded_dirs.contains(item.node.relative_path)) {
         _ = expanded_dirs.remove(item.node.relative_path);
         return;
@@ -405,19 +397,16 @@ fn handleBack(stage: *Stage, cursor: *usize, section_cursor: usize) bool {
 }
 
 fn itemCount(
-    allocator: std.mem.Allocator,
     section_entries: []SectionEntry,
     expanded_dirs: *const std.StringHashMapUnmanaged(void),
     stage: Stage,
     section_cursor: usize,
-) !usize {
+) usize {
     return switch (stage) {
         .section_select => section_entries.len,
         .snippet_select => blk: {
             const current = section_entries[section_cursor];
-            const items = try flattenVisibleNodes(allocator, current.section.root, expanded_dirs);
-            defer allocator.free(items);
-            break :blk items.len;
+            break :blk visibleNodeCount(current.section.root, expanded_dirs);
         },
         .review => 1,
     };
@@ -488,6 +477,59 @@ fn appendVisibleNode(
             try appendVisibleNode(items, allocator, child, expanded_dirs, depth + 1);
         }
     }
+}
+
+fn visibleNodeCount(
+    root: *catalog_mod.Node,
+    expanded_dirs: *const std.StringHashMapUnmanaged(void),
+) usize {
+    var count: usize = 0;
+    for (root.children.items) |child| {
+        count += visibleNodeCountFrom(child, expanded_dirs);
+    }
+    return count;
+}
+
+fn visibleNodeCountFrom(
+    node: *catalog_mod.Node,
+    expanded_dirs: *const std.StringHashMapUnmanaged(void),
+) usize {
+    var count: usize = 1;
+    if (node.kind == .directory and expanded_dirs.contains(node.relative_path)) {
+        for (node.children.items) |child| {
+            count += visibleNodeCountFrom(child, expanded_dirs);
+        }
+    }
+    return count;
+}
+
+fn visibleNodeAt(
+    root: *catalog_mod.Node,
+    expanded_dirs: *const std.StringHashMapUnmanaged(void),
+    target_index: usize,
+) ?VisibleNode {
+    var remaining = target_index;
+    for (root.children.items) |child| {
+        if (visibleNodeAtFrom(child, expanded_dirs, &remaining, 0)) |node| return node;
+    }
+    return null;
+}
+
+fn visibleNodeAtFrom(
+    node: *catalog_mod.Node,
+    expanded_dirs: *const std.StringHashMapUnmanaged(void),
+    remaining: *usize,
+    depth: usize,
+) ?VisibleNode {
+    if (remaining.* == 0) return .{ .node = node, .depth = depth };
+    remaining.* -= 1;
+
+    if (node.kind == .directory and expanded_dirs.contains(node.relative_path)) {
+        for (node.children.items) |child| {
+            if (visibleNodeAtFrom(child, expanded_dirs, remaining, depth + 1)) |result| return result;
+        }
+    }
+    return null;
 }
 
 fn selectionState(
