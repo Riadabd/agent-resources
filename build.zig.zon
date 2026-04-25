@@ -1,0 +1,14 @@
+.{
+    .name = .agents_gen,
+    .version = "0.1.0",
+    .fingerprint = 0xe498b616298ed1a8,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+        "snippets",
+    },
+}
