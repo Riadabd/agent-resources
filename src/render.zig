@@ -30,13 +30,14 @@ pub fn renderSelection(
         wrote_any = true;
         try writeHeading(&writer.writer, 1, section.title);
         try writer.writer.writeAll("\n\n");
-        try renderChildren(&writer.writer, section.root, 2, &selected);
+        try renderChildren(allocator, &writer.writer, section.root, 2, &selected);
     }
 
     return try writer.toOwnedSlice();
 }
 
 fn renderChildren(
+    allocator: std.mem.Allocator,
     writer: *std.Io.Writer,
     node: *const catalog_mod.Node,
     depth: usize,
@@ -48,20 +49,25 @@ fn renderChildren(
             .directory => {
                 try writeHeading(writer, depth, child.title);
                 try writer.writeAll("\n\n");
-                try renderChildren(writer, child, depth + 1, selected);
+                try renderChildren(allocator, writer, child, depth + 1, selected);
             },
-            .file => try renderFile(writer, child, depth),
+            .file => try renderFile(allocator, writer, child, depth),
         }
     }
 }
 
-fn renderFile(writer: *std.Io.Writer, node: *const catalog_mod.Node, depth: usize) !void {
+fn renderFile(
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    node: *const catalog_mod.Node,
+    depth: usize,
+) !void {
     try writeHeading(writer, depth, node.title);
     try writer.writeAll("\n\n");
 
     const source = node.source orelse return;
-    const rewritten = try rewriteBody(std.heap.page_allocator, source.content, depth, source.promoted_title != null);
-    defer std.heap.page_allocator.free(rewritten);
+    const rewritten = try rewriteBody(allocator, source.content, depth, source.promoted_title != null);
+    defer allocator.free(rewritten);
 
     if (rewritten.len > 0) {
         try writer.writeAll(rewritten);
@@ -88,11 +94,22 @@ fn rewriteBody(
     var writer: std.Io.Writer.Allocating = .init(allocator);
     defer writer.deinit();
 
+    var active_fence: ?Fence = null;
     var index: usize = 0;
     while (index < body.len) {
         const next_newline = std.mem.indexOfScalarPos(u8, body, index, '\n') orelse body.len;
         const line = body[index..next_newline];
-        try writeShiftedLine(&writer.writer, line, shift_amount);
+        if (active_fence) |fence| {
+            try writer.writer.writeAll(line);
+            if (isClosingFence(line, fence)) {
+                active_fence = null;
+            }
+        } else if (parseOpeningFence(line)) |fence| {
+            active_fence = fence;
+            try writer.writer.writeAll(line);
+        } else {
+            try writeShiftedLine(&writer.writer, line, shift_amount);
+        }
         if (next_newline < body.len) {
             try writer.writer.writeByte('\n');
         }
@@ -100,6 +117,44 @@ fn rewriteBody(
     }
 
     return try writer.toOwnedSlice();
+}
+
+const Fence = struct {
+    marker: u8,
+    len: usize,
+};
+
+fn parseOpeningFence(line: []const u8) ?Fence {
+    const start = leadingFenceStart(line) orelse return null;
+    const marker = line[start];
+    if (marker != '`' and marker != '~') return null;
+
+    const len = countRepeated(line[start..], marker);
+    if (len < 3) return null;
+    return .{ .marker = marker, .len = len };
+}
+
+fn isClosingFence(line: []const u8, fence: Fence) bool {
+    const start = leadingFenceStart(line) orelse return false;
+    if (line[start] != fence.marker) return false;
+
+    const len = countRepeated(line[start..], fence.marker);
+    if (len < fence.len) return false;
+
+    return std.mem.trim(u8, line[start + len ..], " \t").len == 0;
+}
+
+fn leadingFenceStart(line: []const u8) ?usize {
+    var index: usize = 0;
+    while (index < line.len and index < 3 and line[index] == ' ') : (index += 1) {}
+    if (index >= line.len) return null;
+    return index;
+}
+
+fn countRepeated(value: []const u8, marker: u8) usize {
+    var len: usize = 0;
+    while (len < value.len and value[len] == marker) : (len += 1) {}
+    return len;
 }
 
 fn writeShiftedLine(writer: *std.Io.Writer, line: []const u8, shift_amount: usize) !void {
@@ -190,5 +245,33 @@ test "rendering promotes titles and shifts nested headings" {
 
     try std.testing.expect(std.mem.indexOf(u8, rendered, "# Languages") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "## Python") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "### Style") != null);
+}
+
+test "rendering leaves fenced markdown headings alone" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.makePath("languages");
+    try temp.dir.writeFile(.{
+        .sub_path = "languages/python.md",
+        .data = "# Python\n```markdown\n# Example\n```\n## Style\n",
+    });
+
+    const root_path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+
+    var catalog = try catalog_mod.Catalog.discover(std.testing.allocator, root_path);
+    defer catalog.deinit();
+
+    const rendered = try renderSelection(
+        std.testing.allocator,
+        &catalog,
+        &.{"languages/python.md"},
+    );
+    defer std.testing.allocator.free(rendered);
+
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "```markdown\n# Example\n```") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "### Example") == null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "### Style") != null);
 }
