@@ -29,11 +29,21 @@ const VisibleNode = struct {
     depth: usize,
 };
 
+pub const RunResult = struct {
+    paths: [][]const u8,
+    preview: output_mod.Preview,
+
+    pub fn deinit(self: RunResult, allocator: std.mem.Allocator) void {
+        allocator.free(self.paths);
+        self.preview.deinit(allocator);
+    }
+};
+
 pub fn run(
     allocator: std.mem.Allocator,
     catalog: *const catalog_mod.Catalog,
     output_dir: []const u8,
-) !?[][]const u8 {
+) !?RunResult {
     var terminal = try terminal_mod.Terminal.init(overlay_rows);
     try terminal.enterRaw();
     defer terminal.leaveRaw();
@@ -53,6 +63,8 @@ pub fn run(
     var stage: Stage = .section_select;
     var cursor: usize = 0;
     var section_cursor: usize = 0;
+    var review_preview: ?output_mod.Preview = null;
+    defer if (review_preview) |preview| preview.deinit(allocator);
 
     while (true) {
         const lines = try buildLines(
@@ -64,7 +76,7 @@ pub fn run(
             stage,
             cursor,
             section_cursor,
-            output_dir,
+            if (review_preview) |*preview| preview else null,
         );
         defer freeLines(allocator, lines);
         try terminal.redraw(allocator, lines);
@@ -126,13 +138,20 @@ pub fn run(
                         section_cursor = value;
                         cursor = 0;
                     } else if (selected_files.count() > 0) {
+                        if (review_preview == null) {
+                            review_preview = try output_mod.previewOutputPath(allocator, output_dir, null);
+                        }
                         stage = .review;
                         cursor = 0;
                     }
                 },
                 .review => {
                     if (selected_files.count() == 0) continue;
-                    return try collectSelectedPaths(allocator, catalog, &selected_files);
+                    const paths = try collectSelectedPaths(allocator, catalog, &selected_files);
+                    errdefer allocator.free(paths);
+                    const preview = review_preview orelse return error.MissingReviewPreview;
+                    review_preview = null;
+                    return .{ .paths = paths, .preview = preview };
                 },
             },
             else => {},
@@ -156,7 +175,7 @@ fn buildLines(
     stage: Stage,
     cursor: usize,
     section_cursor: usize,
-    output_dir: []const u8,
+    review_preview: ?*const output_mod.Preview,
 ) ![][]const u8 {
     var lines: std.ArrayList([]const u8) = .empty;
 
@@ -184,7 +203,7 @@ fn buildLines(
             catalog,
             section_entries,
             selected_files,
-            output_dir,
+            review_preview orelse return error.MissingReviewPreview,
         ),
     }
 
@@ -278,11 +297,8 @@ fn buildReviewLines(
     catalog: *const catalog_mod.Catalog,
     section_entries: []SectionEntry,
     selected_files: *const std.StringHashMapUnmanaged(void),
-    output_dir: []const u8,
+    preview: *const output_mod.Preview,
 ) !void {
-    const preview = try output_mod.previewOutputPath(allocator, output_dir, null);
-    defer preview.deinit(allocator);
-
     try lines.append(allocator, try allocator.dupe(u8, "Review and generate"));
     try lines.append(allocator, try std.fmt.allocPrint(allocator, "Output: {s}", .{preview.filename}));
     if (preview.has_agents_file) {

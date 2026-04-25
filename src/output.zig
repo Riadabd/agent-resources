@@ -27,10 +27,8 @@ pub const Preview = struct {
 
 pub const WriteResult = struct {
     preview: Preview,
-    path: []const u8,
 
     pub fn deinit(self: WriteResult, allocator: std.mem.Allocator) void {
-        allocator.free(self.path);
         self.preview.deinit(allocator);
     }
 };
@@ -40,8 +38,7 @@ pub fn previewOutputPath(
     output_dir: []const u8,
     maybe_date: ?DateStamp,
 ) !Preview {
-    std.fs.cwd().makePath(output_dir) catch return Error.InvalidOutputDir;
-    const resolved_dir = try std.fs.cwd().realpathAlloc(allocator, output_dir);
+    const resolved_dir = std.fs.cwd().realpathAlloc(allocator, output_dir) catch return Error.InvalidOutputDir;
     errdefer allocator.free(resolved_dir);
 
     var dir = std.fs.openDirAbsolute(resolved_dir, .{}) catch return Error.InvalidOutputDir;
@@ -68,20 +65,23 @@ pub fn writeGeneratedMarkdown(
     markdown: []const u8,
     maybe_date: ?DateStamp,
 ) !WriteResult {
+    std.fs.cwd().makePath(output_dir) catch return Error.InvalidOutputDir;
+
     const preview = try previewOutputPath(allocator, output_dir, maybe_date);
     errdefer preview.deinit(allocator);
 
+    try writeMarkdownToPreview(&preview, markdown);
+
+    return .{ .preview = preview };
+}
+
+pub fn writeMarkdownToPreview(preview: *const Preview, markdown: []const u8) !void {
     var dir = try std.fs.openDirAbsolute(preview.output_dir, .{});
     defer dir.close();
 
     var file = try dir.createFile(preview.filename, .{ .exclusive = true });
     defer file.close();
     try file.writeAll(markdown);
-
-    return .{
-        .preview = preview,
-        .path = try allocator.dupe(u8, preview.path),
-    };
 }
 
 fn nextAvailableFilename(
@@ -151,4 +151,25 @@ test "preview warns about AGENTS.md and increments same-day filenames" {
 
     try std.testing.expect(preview.has_agents_file);
     try std.testing.expectEqualStrings("AGENTS-26-04-22-01.md", preview.filename);
+}
+
+test "write creates output directory and returns owned preview" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    const root_path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+    const output_dir = try std.fs.path.join(std.testing.allocator, &.{ root_path, "generated" });
+    defer std.testing.allocator.free(output_dir);
+
+    const result = try writeGeneratedMarkdown(
+        std.testing.allocator,
+        output_dir,
+        "content\n",
+        .{ .year = 2026, .month = 4, .day = 22 },
+    );
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualStrings("AGENTS-26-04-22.md", result.preview.filename);
+    try temp.dir.access("generated/AGENTS-26-04-22.md", .{});
 }

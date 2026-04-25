@@ -20,26 +20,25 @@ fn runInteractive(allocator: std.mem.Allocator) !void {
     var catalog = try agents_gen.catalog.Catalog.discover(allocator, "snippets");
     defer catalog.deinit();
 
-    const maybe_paths = try agents_gen.interactive.run(allocator, &catalog, ".");
-    defer if (maybe_paths) |paths| allocator.free(paths);
+    const maybe_result = try agents_gen.interactive.run(allocator, &catalog, ".");
+    defer if (maybe_result) |result| result.deinit(allocator);
 
-    if (maybe_paths) |paths| {
-        const rendered = try agents_gen.render.renderSelection(allocator, &catalog, paths);
+    if (maybe_result) |result| {
+        const rendered = try agents_gen.render.renderSelection(allocator, &catalog, result.paths);
         defer allocator.free(rendered);
 
-        const write_result = try agents_gen.output.writeGeneratedMarkdown(allocator, ".", rendered, null);
-        defer write_result.deinit(allocator);
+        try agents_gen.output.writeMarkdownToPreview(&result.preview, rendered);
 
         var buf: [4096]u8 = undefined;
         var writer = std.fs.File.stdout().writer(&buf);
         defer writer.interface.flush() catch {};
-        if (write_result.preview.has_agents_file) {
+        if (result.preview.has_agents_file) {
             try writer.interface.print(
                 "warning: existing AGENTS.md left untouched in {s}\n",
-                .{write_result.preview.output_dir},
+                .{result.preview.output_dir},
             );
         }
-        try writer.interface.print("generated {s}\n", .{write_result.path});
+        try writer.interface.print("generated {s}\n", .{result.preview.path});
     }
 }
 
@@ -86,5 +85,5 @@ fn runGenerate(allocator: std.mem.Allocator, options: agents_gen.cli.GenerateOpt
             .{write_result.preview.output_dir},
         );
     }
-    try writer.interface.print("generated {s}\n", .{write_result.path});
+    try writer.interface.print("generated {s}\n", .{write_result.preview.path});
 }
