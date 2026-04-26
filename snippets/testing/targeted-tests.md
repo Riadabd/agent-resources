@@ -1,0 +1,1 @@
+- Unless the user asks otherwise, run only the tests you added or modified instead of the entire suite to avoid wasting time.

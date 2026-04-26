@@ -1,0 +1,2 @@
+- Do not run `git` commands that write to files, only run read only commands like `git show`.
+- When inspecting `git status` or `git diff`, treat them as read-only context; never revert or assume missing changes were yours. Other agents or the user may have already committed updates.

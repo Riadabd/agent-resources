@@ -1,0 +1,3 @@
+- Add assertions at API boundaries and state transitions; avoid trivial assertions.
+- Keep functions small and push pure computation into helpers.
+- Comments should explain why, not what.

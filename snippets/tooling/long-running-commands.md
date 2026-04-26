@@ -1,0 +1,1 @@
+- If a command runs longer than 5 minutes, stop it, capture the context, and discuss the timeout with the user before retrying.

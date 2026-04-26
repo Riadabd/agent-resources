@@ -1,0 +1,1 @@
+- When working on a change in a thread, always assume there was(were) other thread(s) that added some changes. This is important in order to avoid duplicating changes or having tunnel-vision that may lead to an inconsistent codebase where things can be made more generic than it already is.

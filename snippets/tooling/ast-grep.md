@@ -1,0 +1,1 @@
+- **AST-first where it helps**. Prefer `ast-grep` for tree-safe edits when it is better than regex.

@@ -1,0 +1,7 @@
+- `camelCase` for functions and methods
+- lower-case `snake_case` for variables, parameters, and constants
+- `PascalCase` for types, structs, and enums
+- prefer `const foo: Type = .{ .field = value };` over `const foo = Type{ .field = value };`
+- preferred file order: `//!` module doc comment, `const Self = @This();`, imports, `const log = std.log.scoped(...)`
+- pass allocators explicitly; use `errdefer` for cleanup on error
+- keep tests inline with the code they cover; register them in `src/main.zig`
