@@ -103,16 +103,16 @@ pub fn run(
                 allocator,
                 section_entries.items,
                 &expanded_dirs,
-                stage,
-                cursor,
-                section_cursor,
+                &stage,
+                &cursor,
+                &section_cursor,
             ),
-            .left => try handleLeft(
+            .left => handleLeft(
                 section_entries.items,
                 &expanded_dirs,
-                stage,
-                cursor,
-                &section_cursor,
+                &stage,
+                &cursor,
+                section_cursor,
             ),
             .escape, .backspace => {
                 if (!handleBack(&stage, &cursor, section_cursor)) return null;
@@ -181,7 +181,7 @@ fn buildLines(
     try lines.append(allocator, try std.fmt.allocPrint(allocator, "--- agents-gen ---", .{}));
     try lines.append(allocator, try std.fmt.allocPrint(
         allocator,
-        "Use arrows to move, Space to toggle, Enter to choose/continue, q to cancel.",
+        "Use right/left arrows to move inside/outside sections and snippets, Space to toggle, Enter to choose/continue, q to cancel.",
         .{},
     ));
 
@@ -349,34 +349,51 @@ fn handleRight(
     allocator: std.mem.Allocator,
     section_entries: []SectionEntry,
     expanded_dirs: *std.StringHashMapUnmanaged(void),
-    stage: Stage,
-    cursor: usize,
-    section_cursor: usize,
+    stage: *Stage,
+    cursor: *usize,
+    section_cursor: *usize,
 ) !void {
-    if (stage != .snippet_select) return;
-    const current = section_entries[section_cursor];
-    const item = visibleNodeAt(current.section.root, expanded_dirs, cursor) orelse return;
-    if (item.node.kind == .directory) {
-        try expandedDirsPut(allocator, expanded_dirs, item.node.relative_path);
+    switch (stage.*) {
+        .section_select => {
+            section_cursor.* = cursor.*;
+            stage.* = .snippet_select;
+            cursor.* = 0;
+        },
+        .snippet_select => {
+            const current = section_entries[section_cursor.*];
+            const item = visibleNodeAt(current.section.root, expanded_dirs, cursor.*) orelse return;
+            if (item.node.kind == .directory) {
+                try expandedDirsPut(allocator, expanded_dirs, item.node.relative_path);
+            }
+        },
+        .review => {},
     }
 }
 
 fn handleLeft(
     section_entries: []SectionEntry,
     expanded_dirs: *std.StringHashMapUnmanaged(void),
-    stage: Stage,
-    cursor: usize,
-    section_cursor: *usize,
-) !void {
-    if (stage != .snippet_select) return;
-    const current = section_entries[section_cursor.*];
-    const item = visibleNodeAt(current.section.root, expanded_dirs, cursor) orelse return;
-    if (item.node.kind == .directory and expanded_dirs.contains(item.node.relative_path)) {
-        _ = expanded_dirs.remove(item.node.relative_path);
-        return;
-    }
-    if (item.depth == 0 and section_cursor.* > 0) {
-        section_cursor.* -= 1;
+    stage: *Stage,
+    cursor: *usize,
+    section_cursor: usize,
+) void {
+    switch (stage.*) {
+        .section_select => {},
+        .snippet_select => {
+            const current = section_entries[section_cursor];
+            const item = visibleNodeAt(current.section.root, expanded_dirs, cursor.*) orelse return;
+
+            if (item.node.kind == .directory and expanded_dirs.contains(item.node.relative_path)) {
+                _ = expanded_dirs.remove(item.node.relative_path);
+                return;
+            }
+
+            if (item.depth == 0) {
+                stage.* = .section_select;
+                cursor.* = section_cursor;
+            }
+        },
+        .review => {},
     }
 }
 
@@ -780,7 +797,11 @@ test "directory expansion uses caller-owned expansion map allocation" {
     var expanded: std.StringHashMapUnmanaged(void) = .empty;
     defer expanded.deinit(allocator);
 
-    try handleRight(allocator, &entries, &expanded, .snippet_select, 0, 0);
+    var stage: Stage = .snippet_select;
+    var cursor: usize = 0;
+    var section_cursor: usize = 0;
+
+    try handleRight(allocator, &entries, &expanded, &stage, &cursor, &section_cursor);
     try std.testing.expect(expanded.contains(directory.relative_path));
 }
 
