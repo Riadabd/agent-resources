@@ -1,5 +1,5 @@
-| Situation | Required action |
-| --- | --- |
-| Starting a task | Read this guide end-to-end and align with any fresh user instructions. |
-| Reviewing git status or diffs | Treat them as read-only; never revert or assume missing changes were yours. |
-| Adding a dependency | Research well-maintained options and confirm fit with the user before adding. |
+- Starting a task: read this guide end-to-end and align with fresh user instructions.
+- Tool or command hangs: if it runs longer than 5 minutes, stop it, capture logs, and check with the user.
+- Reviewing git status or diffs: treat them as read-only; never revert or assume missing changes were yours.
+- Shipping Rust changes: run `cargo fmt` (never `cargo fmt --all`, it will format submodules and create garbage diffs) and `cargo clippy --all --benches --tests --examples --all-features` before handing off.
+- Adding a dependency: research well-maintained options and confirm fit with the user before adding.

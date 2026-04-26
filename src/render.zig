@@ -84,13 +84,15 @@ fn rewriteBody(
     heading_depth: usize,
     had_promoted_title: bool,
 ) ![]u8 {
+    std.debug.assert(heading_depth > 0);
+
     var body = content;
     if (had_promoted_title) {
         const line_end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
         body = if (line_end < body.len) body[line_end + 1 ..] else "";
     }
 
-    const shift_amount: usize = if (had_promoted_title) heading_depth - 1 else heading_depth;
+    const shift_amount: usize = heading_depth - 1;
     var writer: std.Io.Writer.Allocating = .init(allocator);
     defer writer.deinit();
 
@@ -246,6 +248,35 @@ test "rendering promotes titles and shifts nested headings" {
     try std.testing.expect(std.mem.indexOf(u8, rendered, "# Languages") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "## Python") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "### Style") != null);
+}
+
+test "rendering shifts headings under inferred file titles" {
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+
+    try temp.dir.makePath("languages");
+    try temp.dir.writeFile(.{
+        .sub_path = "languages/rust.md",
+        .data = "- Prefer explicit errors.\n\n## Workflow\nRun clippy.\n",
+    });
+
+    const root_path = try temp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+
+    var catalog = try catalog_mod.Catalog.discover(std.testing.allocator, root_path);
+    defer catalog.deinit();
+
+    const rendered = try renderSelection(
+        std.testing.allocator,
+        &catalog,
+        &.{"languages/rust.md"},
+    );
+    defer std.testing.allocator.free(rendered);
+
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "# Languages") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "## Rust") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "### Workflow") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered, "#### Workflow") == null);
 }
 
 test "rendering leaves fenced markdown headings alone" {

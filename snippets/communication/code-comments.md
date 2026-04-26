@@ -1,2 +1,2 @@
-- Jokes in code comments are fine if used sparingly and you are sure the joke will land
-- Cursing in code comments is definitely allowed in fact there are studies it leads to better code, so let your rage coder fly, obviously within reason don't be cringe
+- Jokes in code comments are fine if used sparingly and you are sure the joke will land.
+- Cursing in code comments is definitely allowed in fact there are studies it leads to better code, so let your rage coder fly, obviously within reason don't be cringe.

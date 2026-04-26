@@ -1,2 +1,2 @@
-- Do not run `git` commands that write to files, only run read only commands like `git show`.
+- Do not run `git` commands that write to files or history unless the user explicitly authorizes git write operations for the current task. If the user gives that permission, use the minimum necessary write commands and still avoid destructive operations like `git reset --hard`, `git checkout --`, rebases, or force pushes unless the user explicitly asks for them.
 - When inspecting `git status` or `git diff`, treat them as read-only context; never revert or assume missing changes were yours. Other agents or the user may have already committed updates.

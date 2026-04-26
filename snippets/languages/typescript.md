@@ -1,1 +1,3 @@
-- In TypeScript codebases NEVER, EVER use `any` we are better than that. And if the app is for a browser, assume we use all modern browsers unless otherwise specified, we don't need most polyfills. Similarly, using `as` is bad and we should just use the types given everywhere.
+- Do not use `any`; we are better than that.
+- Using `as` is bad, use the types given everywhere and model the real shapes.
+- If the app is for a browser, assume we use all modern browsers unless otherwise specified, we don't need most polyfills.

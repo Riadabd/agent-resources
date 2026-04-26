@@ -1,0 +1,1 @@
+- For GitHub operations, use the `gh` CLI instead of any GitHub MCP server. Do not install, configure, or rely on a repo-local GitHub MCP in this repo. If `gh` is not available in the current environment, tell the user instead of installing local tooling.

@@ -1,0 +1,15 @@
+# KCL
+
+- Assume you have access to the Zoo MCP server, if you do not tell the user.
+- Use the multi-view snapshot tool to verify the code looks right with what the user asked for.
+- Prefer sketch-solve KCL over the older sketch-v1 pipeline when modeling from scratch. Default to `sketch(on = XY) { ... }` style blocks on the correct plane, define closed profiles with `region(...)`, and use constraints to encode the design intent instead of hand-solving geometry.
+- Use sketch-solve constraints such as `coincident`, `horizontal`, `vertical`, `parallel`, `perpendicular`, `equalLength`, `distance`, `angle`, `radius`, and `diameter` when they describe the part more clearly than raw coordinates.
+- Do not default to `startSketchOn(...) |> startProfileAt(...) |> lineTo(...)`, `xLine`, `yLine`, `rectangle`, or similar sketch-v1 helpers when a constrained sketch-solve model would be clearer and more robust.
+- Build sketches as constrained regions first, then extrude or cut those regions. Avoid baking solved coordinates into the model when a relation or dimension can express the shape cleanly.
+- Treat sketch-solve as the normal KCL workflow here, do not quietly fall back to sketch v1 just because older examples or stale docs still exist.
+- Do not use the text-to-cad tool, write code yourself.
+- Do not use external tools for doing math and injecting raw values into the KCL code, write the math into the model you are coding.
+- Write parametric cad models, that are maintainable, meaning if a user changes something later, we want to avoid the model breaking when a parameter changes.
+- Always verify your model compiles and looks right using the multi-view snapshot tool.
+- Don't trust other KCL on the host system to learn the language, look up KCL docs using web search if you need to. Other KCL files on the host could have stale syntax.
+- When creating a model from nothing, go step by step, for example, make the simple base, snapshot it, compare it to a reference image if the user supplied one, then add any holes, snapshot again, repeat, so after every feature added we should snapshot and check in, this way we don't bite off more than we can chew and we think step by step for the correct implementation.

@@ -1,0 +1,1 @@
+- For Google Workspace operations, use the `gws` CLI. If `gws` is not available in the current environment, tell the user instead of installing repo-local tooling or guessing.
