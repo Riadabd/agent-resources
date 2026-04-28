@@ -23,11 +23,8 @@ pub fn renderSelection(
     var writer: std.Io.Writer.Allocating = .init(allocator);
     defer writer.deinit();
 
-    var wrote_any = false;
     for (catalog.sections.items) |section| {
         if (!nodeHasSelection(section.root, &selected)) continue;
-        if (wrote_any) try writer.writer.writeAll("\n");
-        wrote_any = true;
         try writeHeading(&writer.writer, 1, section.title);
         try writer.writer.writeAll("\n\n");
         try renderChildren(allocator, &writer.writer, section.root, 2, &selected);

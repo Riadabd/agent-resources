@@ -1,5 +1,3 @@
-# KCL
-
 - Assume you have access to the Zoo MCP server, if you do not tell the user.
 - Use the multi-view snapshot tool to verify the code looks right with what the user asked for.
 - Prefer sketch-solve KCL over the older sketch-v1 pipeline when modeling from scratch. Default to `sketch(on = XY) { ... }` style blocks on the correct plane, define closed profiles with `region(...)`, and use constraints to encode the design intent instead of hand-solving geometry.

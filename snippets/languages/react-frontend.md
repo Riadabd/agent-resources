@@ -1,5 +1,3 @@
-# React & Frontend
-
 - For React work, follow current React best practices. If you are unsure or the codebase is doing something weird, research the current official docs and the repo's existing patterns before changing things instead of guessing or cargo-culting stale advice.
 - Keep components small, focused, and reusable. Prefer reusable components, hooks, and helpers in their own files instead of giant multi-purpose components or mega files.
 - Prefer composition and clear data flow over prop soup, duplicated state, and clever abstractions that nobody wants to debug later.
