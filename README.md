@@ -54,9 +54,12 @@ directory.
 Use the picker like this:
 
 - `Up` / `Down`: move the cursor.
-- `Space`: toggle the highlighted section, file, or directory.
-- `Enter`: start snippet selection from the section list, continue to the next
-  selected section, or generate from the review screen.
+- `Space`: toggle the highlighted section or file. On a directory row, toggles
+  every snippet under that directory.
+- `Enter`: from the section list, start snippet selection for the first selected
+  section, or the highlighted section if none are selected. From snippet
+  selection, continue to the next selected section or move to review. From the
+  review screen, generate the file.
 - `Right`: open the highlighted section from the section list, or expand a
   directory in snippet selection.
 - `Left`: collapse an expanded directory, or return to the section list from a
@@ -71,13 +74,15 @@ The picker has three stages:
 1. Review the output filename and selected files, then press `Enter` to write.
 
 If you press `Enter` during snippet selection without selecting any snippet
-first, the highlighted snippet or directory is selected for that section. This
-keeps the single-snippet path quick without hiding what will be generated.
+first, the highlighted snippet or directory is selected for that section. A
+directory selection includes every snippet under it. This keeps the
+single-snippet path quick without hiding what will be generated.
 
 ### `zig build run -- list`
 
-Prints the discovered catalog. Paths in this output are the paths to pass to the
-explicit `generate` flags.
+Prints the discovered catalog. File paths in this output are the paths to pass to
+the explicit `generate` flags. Directory rows are shown for orientation and are
+not accepted by explicit generation.
 
 ```bash
 zig build run -- list
@@ -95,7 +100,9 @@ Known section aliases work for listing. For example, `language` matches the
 
 ### `zig build run -- generate`
 
-Writes a generated Markdown file without opening the picker.
+Writes a generated Markdown file without opening the picker. You must choose one
+selection mode: pass `--snippets` for the whole tree, or pass at least one
+explicit section flag with one or more file paths.
 
 Wholesale generation uses a snippets root and includes every `.md` file under it:
 
@@ -103,8 +110,8 @@ Wholesale generation uses a snippets root and includes every `.md` file under it
 zig build run -- generate --output-dir . --snippets snippets
 ```
 
-Explicit generation uses section flags. The path after each flag must belong to
-that section:
+Explicit generation uses section flags. Each path after a flag must be a file
+path that belongs to that section:
 
 ```bash
 zig build run -- generate \
@@ -126,7 +133,9 @@ Supported explicit section flags:
 
 `--snippets` and explicit section flags are mutually exclusive. Use `--snippets`
 when you want the whole tree, including custom top-level sections. Use explicit
-flags when you want a curated subset of the known profile sections.
+flags when you want a curated subset of the known profile sections. A bare
+`zig build run -- generate --output-dir .` fails because it does not select any
+snippets.
 
 ## Snippet Layout
 
@@ -165,6 +174,25 @@ document keeps a coherent hierarchy. Headings inside fenced code blocks are left
 unchanged.
 
 ## Development
+
+Use Zig 0.15.2 for this repo. The package declares 0.15.2 as the minimum, and
+the code targets the 0.15.2 standard library APIs. Newer Zig versions can still
+break the build.
+
+If Zig 0.15.2 is installed natively:
+
+```bash
+zig version
+```
+
+If you use Nix, enter the checked-in flake dev shell instead:
+
+```bash
+nix develop
+zig version
+```
+
+Both paths should report `0.15.2` before you build or test.
 
 Build and run the tool:
 
