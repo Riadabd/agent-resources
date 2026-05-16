@@ -1,0 +1,5 @@
+- Do not extract a method, helper, class, or utility just to give one block of code a name.
+- Keep logic inline when it has one caller and remains readable at the call site.
+- Extract only when it removes real duplication, creates a clear domain boundary, isolates a meaningful side effect, or makes non-trivial behavior easier to test.
+- A one-call helper must earn its existence by making the code materially simpler. If it mostly adds indirection, inline it.
+- Avoid dumping tiny helpers into generic `utils`, `helpers`, or `common` modules. That is how codebases get mold.
